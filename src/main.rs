@@ -9,6 +9,12 @@ use std::fs;
 const YT_BASE: &str = "https://www.youtube.com";
 const BROWSE_ENDPOINT: &str = "https://www.youtube.com/youtubei/v1/browse";
 
+#[derive(Clone, Debug)]
+struct VideoEntry {
+    id: String,
+    title: String,
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -52,32 +58,32 @@ fn main() -> Result<()> {
     let initial_data: Value =
         serde_json::from_str(&initial_data_json).context("Invalid ytInitialData JSON")?;
 
-    let mut collected: Vec<String> = Vec::new();
+    let mut collected: Vec<VideoEntry> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    let (initial_ids, mut continuation) = extract_initial_ids_and_continuation(&initial_data);
-    push_unique_in_order(&mut collected, &mut seen, initial_ids);
+    let (initial_videos, mut continuation) = extract_initial_videos_and_continuation(&initial_data);
+    push_unique_in_order(&mut collected, &mut seen, initial_videos);
 
-    while !collected.iter().any(|id| id == &root_video_id) {
+    while !collected.iter().any(|v| v.id == root_video_id) {
         let Some(token) = continuation else {
             break;
         };
         let response = fetch_continuation(&client, api_key, &context, &token)?;
-        let (ids, next) = extract_continuation_ids_and_token(&response);
-        if ids.is_empty() && next.is_none() {
+        let (videos, next) = extract_continuation_videos_and_token(&response);
+        if videos.is_empty() && next.is_none() {
             break;
         }
-        push_unique_in_order(&mut collected, &mut seen, ids);
+        push_unique_in_order(&mut collected, &mut seen, videos);
         continuation = next;
     }
 
-    let Some(root_index) = collected.iter().position(|id| id == &root_video_id) else {
+    let Some(root_index) = collected.iter().position(|v| v.id == root_video_id) else {
         return Err(anyhow!(
             "Root video ({root_video_id}) not found in channel list. It may be private/deleted or the channel has changed."
         ));
     };
 
-    let result: Vec<String> = collected[..root_index]
+    let result: Vec<VideoEntry> = collected[..root_index]
         .iter()
         .rev()
         .take(n)
@@ -89,9 +95,9 @@ fn main() -> Result<()> {
     } else {
         result
             .into_iter()
-            .map(|id| format!("{YT_BASE}/watch?v={id}"))
+            .map(|video| format!("{}\n{YT_BASE}/watch?v={}", video.title, video.id))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n\n")
     };
     fs::write(&output_path, output).with_context(|| format!("Failed to write {output_path}"))?;
 
@@ -228,7 +234,7 @@ fn extract_json_after_marker(haystack: &str, marker: &str) -> Option<String> {
     None
 }
 
-fn extract_initial_ids_and_continuation(data: &Value) -> (Vec<String>, Option<String>) {
+fn extract_initial_videos_and_continuation(data: &Value) -> (Vec<VideoEntry>, Option<String>) {
     let tabs = data
         .get("contents")
         .and_then(|v| v.get("twoColumnBrowseResultsRenderer"))
@@ -257,13 +263,13 @@ fn extract_initial_ids_and_continuation(data: &Value) -> (Vec<String>, Option<St
         let Some(contents) = contents else {
             continue;
         };
-        return extract_ids_and_token_from_items(contents);
+        return extract_videos_and_token_from_items(contents);
     }
 
     (Vec::new(), None)
 }
 
-fn extract_continuation_ids_and_token(data: &Value) -> (Vec<String>, Option<String>) {
+fn extract_continuation_videos_and_token(data: &Value) -> (Vec<VideoEntry>, Option<String>) {
     let mut items_ref: Option<&Vec<Value>> = None;
 
     if let Some(actions) = data
@@ -300,33 +306,37 @@ fn extract_continuation_ids_and_token(data: &Value) -> (Vec<String>, Option<Stri
     }
 
     match items_ref {
-        Some(items) => extract_ids_and_token_from_items(items),
+        Some(items) => extract_videos_and_token_from_items(items),
         None => (Vec::new(), None),
     }
 }
 
-fn extract_ids_and_token_from_items(items: &[Value]) -> (Vec<String>, Option<String>) {
-    let mut ids = Vec::new();
+fn extract_videos_and_token_from_items(items: &[Value]) -> (Vec<VideoEntry>, Option<String>) {
+    let mut videos = Vec::new();
     let mut token = None;
 
     for item in items {
-        if let Some(video_id) = item
+        if let Some(renderer) = item
             .get("richItemRenderer")
             .and_then(|v| v.get("content"))
             .and_then(|v| v.get("videoRenderer"))
-            .and_then(|v| v.get("videoId"))
-            .and_then(Value::as_str)
         {
-            ids.push(video_id.to_string());
+            if let Some(video_id) = renderer.get("videoId").and_then(Value::as_str) {
+                videos.push(VideoEntry {
+                    id: video_id.to_string(),
+                    title: extract_renderer_title(renderer),
+                });
+            }
             continue;
         }
 
-        if let Some(video_id) = item
-            .get("gridVideoRenderer")
-            .and_then(|v| v.get("videoId"))
-            .and_then(Value::as_str)
-        {
-            ids.push(video_id.to_string());
+        if let Some(renderer) = item.get("gridVideoRenderer") {
+            if let Some(video_id) = renderer.get("videoId").and_then(Value::as_str) {
+                videos.push(VideoEntry {
+                    id: video_id.to_string(),
+                    title: extract_renderer_title(renderer),
+                });
+            }
             continue;
         }
 
@@ -341,17 +351,40 @@ fn extract_ids_and_token_from_items(items: &[Value]) -> (Vec<String>, Option<Str
         }
     }
 
-    (ids, token)
+    (videos, token)
 }
 
 fn push_unique_in_order(
-    target: &mut Vec<String>,
+    target: &mut Vec<VideoEntry>,
     seen: &mut HashSet<String>,
-    incoming: Vec<String>,
+    incoming: Vec<VideoEntry>,
 ) {
-    for id in incoming {
-        if seen.insert(id.clone()) {
-            target.push(id);
+    for video in incoming {
+        if seen.insert(video.id.clone()) {
+            target.push(video);
         }
     }
+}
+
+fn extract_renderer_title(renderer: &Value) -> String {
+    if let Some(title) = renderer
+        .get("title")
+        .and_then(|v| v.get("simpleText"))
+        .and_then(Value::as_str)
+    {
+        return title.to_string();
+    }
+
+    if let Some(title) = renderer
+        .get("title")
+        .and_then(|v| v.get("runs"))
+        .and_then(Value::as_array)
+        .and_then(|runs| runs.first())
+        .and_then(|run| run.get("text"))
+        .and_then(Value::as_str)
+    {
+        return title.to_string();
+    }
+
+    "(untitled)".to_string()
 }

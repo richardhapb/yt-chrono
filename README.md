@@ -27,17 +27,24 @@ Arguments:
 ## Example
 
 ```bash
-cargo run -- "https://www.youtube.com/watch?v=oGyLEMSOmjU&t=2012s" 5 videos.txt
+# Implementing TCP in Rust (part 1)
+cargo r -- 'https://www.youtube.com/watch?v=bzja9fQWzdA' 4 videos.txt
 ```
 
 Example output file content:
 
 ```txt
-https://www.youtube.com/watch?v=JTXWwvnE0Rw
-https://www.youtube.com/watch?v=YljkmnFRVP4
-https://www.youtube.com/watch?v=xmO3U9VGRXA
-https://www.youtube.com/watch?v=LFsNO9bhH1U
-https://www.youtube.com/watch?v=OMz-Ob6w7HE
+Implementing TCP in Rust (part 2)
+https://www.youtube.com/watch?v=OCpt1I0MWXE
+
+Implementing TCP in Rust (part 3)
+https://www.youtube.com/watch?v=8GE6ltLRJA4
+
+Procedural Macros in Rust (part 1)
+https://www.youtube.com/watch?v=geovSK3wMB8
+
+Procedural Macros in Rust (part 2)
+https://www.youtube.com/watch?v=KVWHT1TAirU
 ```
 
 ## Notes
