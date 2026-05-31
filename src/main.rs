@@ -316,15 +316,33 @@ fn extract_videos_and_token_from_items(items: &[Value]) -> (Vec<VideoEntry>, Opt
     let mut token = None;
 
     for item in items {
-        if let Some(renderer) = item
+        let content = item
             .get("richItemRenderer")
-            .and_then(|v| v.get("content"))
-            .and_then(|v| v.get("videoRenderer"))
-        {
+            .and_then(|v| v.get("content"));
+
+        if let Some(renderer) = content.and_then(|v| v.get("videoRenderer")) {
             if let Some(video_id) = renderer.get("videoId").and_then(Value::as_str) {
                 videos.push(VideoEntry {
                     id: video_id.to_string(),
                     title: extract_renderer_title(renderer),
+                });
+            }
+            continue;
+        }
+
+        // Newer channel layout: items are lockupViewModel instead of videoRenderer.
+        if let Some(lockup) = content.and_then(|v| v.get("lockupViewModel")) {
+            let is_video = lockup
+                .get("contentType")
+                .and_then(Value::as_str)
+                .map(|t| t == "LOCKUP_CONTENT_TYPE_VIDEO")
+                .unwrap_or(false);
+            if is_video
+                && let Some(video_id) = lockup.get("contentId").and_then(Value::as_str)
+            {
+                videos.push(VideoEntry {
+                    id: video_id.to_string(),
+                    title: extract_lockup_title(lockup),
                 });
             }
             continue;
@@ -364,6 +382,17 @@ fn push_unique_in_order(
             target.push(video);
         }
     }
+}
+
+fn extract_lockup_title(lockup: &Value) -> String {
+    lockup
+        .get("metadata")
+        .and_then(|v| v.get("lockupMetadataViewModel"))
+        .and_then(|v| v.get("title"))
+        .and_then(|v| v.get("content"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "(untitled)".to_string())
 }
 
 fn extract_renderer_title(renderer: &Value) -> String {
