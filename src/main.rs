@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::Client;
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::env;
@@ -48,10 +48,16 @@ fn main() -> Result<()> {
         .get("INNERTUBE_API_KEY")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("INNERTUBE_API_KEY not found"))?;
-    let context = ytcfg
+    let mut context = ytcfg
         .get("INNERTUBE_CONTEXT")
         .cloned()
         .ok_or_else(|| anyhow!("INNERTUBE_CONTEXT not found"))?;
+    // YouTube auto-translates titles to the request locale (es here). Force a
+    // neutral English locale so we keep each video's original title.
+    if let Some(client) = context.get_mut("client").and_then(Value::as_object_mut) {
+        client.insert("hl".to_string(), json!("en"));
+        client.insert("gl".to_string(), json!("US"));
+    }
 
     let initial_data_json = extract_json_after_marker(&channel_videos_html, "var ytInitialData = ")
         .ok_or_else(|| anyhow!("Could not find ytInitialData JSON"))?;
@@ -112,6 +118,12 @@ fn build_client() -> Result<Client> {
         HeaderValue::from_static(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         ),
+    );
+    // Request a neutral English locale so YouTube does not localize/translate
+    // titles in the initial page fetch.
+    headers.insert(
+        ACCEPT_LANGUAGE,
+        HeaderValue::from_static("en-US,en;q=0.9"),
     );
     Client::builder()
         .default_headers(headers)
